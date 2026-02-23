@@ -1,59 +1,29 @@
-# Meshery MCP Server (Reference Implementation)
+# Meshery MCP Server
 
-Minimal, extensible MCP server for Meshery relationship workflows:
-- `create_relationship`
-- `validate_relationship`
-- `explain_relationship`
+Thin MCP bridge (~650 LOC) for Meshery relationship workflows. Delegates to Meshery's REST API instead of reimplementing functionality locally.
 
-This implementation is schema/model-grounded and deterministic-first:
-- Loads relationship schema from Meshery artifacts.
-- Indexes model catalogs from local model paths.
-- Validates relationships deterministically before final output.
-- Uses optional integrations spreadsheet only as non-authoritative ranking hints.
+## Tools
 
-## Architecture
+| Tool | Description |
+|------|-------------|
+| `get_schema` | Returns relationship schema version, valid kinds, required fields, and a minimal skeleton template |
+| `get_model` | Fetches all component kinds registered under a Meshery model (e.g. `kubernetes`) |
+| `manage_relationship` | Validates or creates a relationship. `action=validate` checks JSON against schema + component cross-reference. `action=create` generates a new relationship from the skeleton template |
 
-- Knowledge Layer
-  - Relationship schema loader (`v1alpha3`).
-  - Model catalog indexer (`model.json`, `components/`, `relationships/`).
-  - Optional integrations metadata loader (XLSX hints only).
-- Deterministic Engine
-  - Required/type/enum checks.
-  - Selector structure checks.
-  - Component reference resolution against indexed catalogs.
-  - Structured error objects with stable codes:
-    - `MissingField`
-    - `InvalidEnum`
-    - `InvalidType`
-    - `ComponentNotFound`
-    - `SelectorTooBroad`
-    - `VersionMismatch`
-    - `ParseError`
-- LLM Orchestration Layer (reference heuristic implementation)
-  - Intent-to-relationship proposal logic.
-  - Propose -> validate -> repair loop.
-- MCP Tools
-  - `get_relationship_schema`
-  - `index_model_catalog`
-  - `list_components`
-  - `validate_relationship`
-  - `create_relationship`
-  - `repair_relationship`
-  - `explain_relationship`
-  - `suggest_model`
+## Prerequisites
+
+A running Meshery server (default: `http://localhost:9081`).
 
 ## Build
 
 ```bash
-go build ./cmd/meshery-mcp
+go build -o bin/meshery-mcp ./cmd/meshery-mcp
 ```
 
 ## Run (stdio)
 
 ```bash
-go run ./cmd/meshery-mcp \
-  --transport stdio \
-  --model-path ./testdata/sample-model
+go run ./cmd/meshery-mcp --meshery-url http://localhost:9081
 ```
 
 ## Run (SSE)
@@ -61,22 +31,42 @@ go run ./cmd/meshery-mcp \
 ```bash
 go run ./cmd/meshery-mcp \
   --transport sse \
+  --meshery-url http://localhost:9081 \
   --host 127.0.0.1 \
   --port 8080 \
-  --endpoint /mcp \
-  --model-path ./testdata/sample-model
+  --endpoint /mcp
 ```
 
-## Key flags
+## Flags
 
-- `--transport`: `stdio` or `sse`
-- `--model-path`: default model catalog root
-- `--schema-path`: relationship schema file path
-- `--template-path`: relationship template path
-- `--integrations-metadata-path`: optional spreadsheet path (hints only)
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--transport` | `stdio` | Transport mode: `stdio` or `sse` |
+| `--meshery-url` | `http://localhost:9081` | Meshery server URL |
+| `--host` | `127.0.0.1` | Host for SSE mode |
+| `--port` | `8080` | Port for SSE mode |
+| `--endpoint` | `/mcp` | HTTP endpoint path for SSE mode |
+| `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `--version` | | Print version and exit |
 
-## Notes
+## Architecture
 
-- This is a coherent reference server, not a full product.
-- For strict, current Meshery schema behavior, point `--schema-path` and `--template-path` to `meshery-schemas` artifacts.
-- If model path is omitted during validation, schema checks run and component cross-reference is skipped with warnings.
+```
+LLM Client
+  │
+  │ MCP Protocol (stdio or SSE)
+  ▼
+┌──────────────────────────┐
+│   Meshery MCP Server     │
+│                          │
+│  3 tools, flat schemas   │
+│  HTTP client ────────┐   │
+└──────────────────────┤───┘
+                       ▼
+             ┌──────────────────┐
+             │  Meshery Server  │
+             │  (REST API)      │
+             └──────────────────┘
+```
+
+The server is stateless. No local model files, no catalogs, no indexes. Component data and validation context come from Meshery's API.
